@@ -1,0 +1,52 @@
+name: dev-build
+# One-off dev build of the verified main commit for local testing.
+# Trigger manually; uploads the Windows x64 exe as an artifact.
+# No release is published.
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  win64:
+    name: dev build (x86_64-pc-windows-msvc)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - name: Record source
+        shell: bash
+        run: |
+          git rev-parse HEAD > SOURCE-COMMIT.txt
+          cat SOURCE-COMMIT.txt
+          grep '^version' Cargo.toml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - run: rustup target add x86_64-pc-windows-msvc
+      # Official release procedure (release.yml): locked release build.
+      - run: cargo build --locked --release --target x86_64-pc-windows-msvc
+      - name: Verify 64-bit executable
+        shell: pwsh
+        run: |
+          $exe = 'target\x86_64-pc-windows-msvc\release\zapfast.exe'
+          Get-Item $exe | Select-Object Name, Length | Format-List
+          $bytes = [IO.File]::ReadAllBytes($exe)
+          $pe = [BitConverter]::ToUInt32($bytes, [BitConverter]::ToInt32($bytes, 0x3C))
+          $machine = [BitConverter]::ToUInt16($bytes, $pe + 4)
+          if ($machine -ne 0x8664) { throw "not x86-64 (machine=0x$($machine.ToString('X4')))" }
+          'PE machine=x86-64 OK'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zapfast-dev-windows-x64
+          path: |
+            target/x86_64-pc-windows-msvc/release/zapfast.exe
+            README.md
+            LICENSE
+            THIRD-PARTY-NOTICES.md
+            packaging/zapfast-portable.txt
+            SOURCE-COMMIT.txt
+          if-no-files-found: error
